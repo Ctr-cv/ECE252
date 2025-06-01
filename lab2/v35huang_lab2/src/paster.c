@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <string.h>
+#include <stdbool.h>
 #include "../include/catpng.h"
 
 #define NUM_PICTURES 50
@@ -40,6 +41,7 @@ int getimg(int argc) {
     if (len + 1 < sizeof(url)){
         snprintf(url + len, sizeof(url) - len, "%d", argc);
     } else printf("Char buffer is full\n");
+    printf("URL is %s\n", url);
 
     curl_global_init(CURL_GLOBAL_DEFAULT);
 
@@ -78,19 +80,24 @@ int getimg(int argc) {
 	printf("%lu bytes received in memory %p, seq=%d.\n",
         recv_buf.size, recv_buf.buf, recv_buf.seq);
     }
+    bool exists = false;
+    pthread_mutex_lock(&lock);
     if (global_array[recv_buf.seq] != 0){
         printf("Image already exists, skipping...\n");
+        exists = true;
     } else {
         global_array[recv_buf.seq] = 1;
         REMAINING--;
+
         sprintf(fname, "./output_%d.png", recv_buf.seq);
         write_file(fname, recv_buf.buf, recv_buf.size);
         printf("%d remaining\n", REMAINING);
     }
+    pthread_mutex_unlock(&lock);
     curl_easy_cleanup(curl_handle);
     curl_global_cleanup();
     recv_buf_cleanup(&recv_buf);
-    return 0;
+    return exists ? 1 : 0;
 }
 
 void* thread_exe(void* arg){
@@ -102,10 +109,12 @@ void* thread_exe(void* arg){
         pthread_mutex_lock(&lock);
         if (REMAINING <= 0) {
             pthread_mutex_unlock(&lock);
-            return NULL;
+            break;
         }
-        getimg(pic_num);
         pthread_mutex_unlock(&lock);
+        if (getimg(pic_num) != 0) {
+            printf("error, continuing:\n");
+        }
     }
     return NULL;
 }
@@ -132,6 +141,7 @@ int main(int argc, char **argv){
         fprintf(stderr, "Too many/too little parameters present\n");
         return 1;
     }
+    if (thr > 1) thr--;
     // tracks all thread ids
     pthread_t threads[thr];
 
